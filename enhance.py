@@ -59,6 +59,19 @@ def addRiskColumn(table, incidencePrognosisColumn, newColumn, darkFactor):
     #print(newTable)
     return newTable
 
+def addDifferenceColumn(table, theColumn, minusColumn, newColumn):
+    theValue = dt.f[theColumn]
+    minusValue = dt.f[minusColumn]
+    newTable = table[:, dt.f[:].extend({newColumn: theValue - minusValue})]
+    #print(newTable)
+    return newTable
+
+def addRatioColumn(table, theColumn, divideByColumn, newColumn, factor=1):
+    theValue = dt.f[theColumn]
+    divisor = dt.f[divideByColumn]
+    newTable = table[:, dt.f[:].extend({newColumn: (theValue * factor) / divisor })]
+    #print(newTable)
+    return newTable
 
 def addIncidenceColumn(table, srcColumn, newColumn):
     src = dt.f[srcColumn]
@@ -66,6 +79,15 @@ def addIncidenceColumn(table, srcColumn, newColumn):
     #print(list(zip(table.names, table.stypes)))
     newTable = table[:, dt.f[:].extend({newColumn: src / dt.f.Einwohner * 100000})]
     return newTable
+
+def addMultipliedColumn(table, srcColumn, newColumn, factor):
+    src = dt.f[srcColumn]
+    #print("srcColumn",srcColumn)
+    #print(list(zip(table.names, table.stypes)))
+    newTable = table[:, dt.f[:].extend({newColumn: src * factor})]
+    return newTable
+
+
 
 # goal = incidence * trend ^ t
 # trend ^ t = goal/incidence
@@ -95,18 +117,33 @@ def addIncidences(table):
     table = addIncidenceColumn(table, "AnzahlTodesfallNeu", "InzidenzTodesfallNeu")
 
     candidatesColumns = [name for name in table.names if ("AnzahlFall" in name or "AnzahlTodesfall" in name) and not "Neu" in name]
-    print("addIncidences candidates:", candidatesColumns)
+    #print("addIncidences candidates:", candidatesColumns)
     for c in candidatesColumns:
         newColName = c.replace("Anzahl","Inzidenz")
         table = addIncidenceColumn(table, c, newColName)
 
     return table
 
+def enhanceDatenstandTagMax(table):
+    for row in range(table.nrows):
+        table[row,"DatenstandTag-Max"] = table[:row+1,"DatenstandTag-Max"].max()
+    return table
+
+
+def addMoreMetrics(table):
+    table = enhanceDatenstandTagMax(table)
+    table = addDifferenceColumn(table, "DatenstandTag-Max", "DatenstandTag", "DatenstandTag-Diff")
+    table = addIncidenceColumn(table, "AnzahlFallNeu-Meldung-letze-7-Tage-7-Tage", "InzidenzFallNeu-Meldung-letze-7-Tage-7-Tage")
+    table = addDifferenceColumn(table, "AnzahlFallNeu-7-Tage", "AnzahlFallNeu-Meldung-letze-7-Tage-7-Tage", "AnzahlFallNeu-7-Tage-Dropped")
+    table = addRatioColumn(table, "AnzahlFallNeu-7-Tage-Dropped", "AnzahlFallNeu-7-Tage", "ProzentFallNeu-7-Tage-Dropped", factor=100)
+    table = addMultipliedColumn(table, "MeldeDauerFallNeu-Min", "MeldeDauerFallNeu-Min-Neg", factor=-1)
+
+    return table
 
 def add7DayAverages(table):
-    print(table.names)
+    #print(table.names)
     candidatesColumns = [name for name in  table.names if "Neu" in name]
-    print(candidatesColumns)
+    #print(candidatesColumns)
     for c in candidatesColumns:
         table = add7dSumColumn(table, c, c+"-7-Tage")
         table = add7dTrendColumn(table, c+"-7-Tage", c+"-7-Tage-Trend")
@@ -128,26 +165,30 @@ def add7DayAverages(table):
     return table
 
 def enhance(inputFile, destDir="."):
+    #print("Loading {}...".format(inputFile))
+
     table = dt.fread(inputFile)
-    print(table.names)
-    print(table.stypes)
-    print(list(zip(table.names, table.stypes)))
-    print("----------------------------------------")
+    #print(table.names)
+    #print(table.stypes)
+    #print(list(zip(table.names, table.stypes)))
+    #print("----------------------------------------")
 
     typedict = {}
     for i, name in enumerate(table.names):
         if table.stypes[i] == dt.stype.bool8:
             typedict[name] = dt.stype.int32
-    print(typedict)
+    #print(typedict)
+    #print("Loading {}... - for real now".format(inputFile))
     table = dt.fread(inputFile, columns=typedict)
-    print(table.names)
-    print(table.stypes)
+    #print(table.names)
+    #print(table.stypes)
 
-    numericColumns = [name for name in table.names if "Anzahl" in name or "Inzidenz" in name]
+    numericColumns = [name for name in table.names if "Anzahl" in name or "Inzidenz" in name or "DatenstandTag-Max" in name]
     fillEmptyCellsWithZeroes(table, numericColumns)
 
     newTable = addIncidences(table)
     newTable = add7DayAverages(newTable)
+    newTable = addMoreMetrics(newTable)
 
     path = os.path.normpath(inputFile)
     fileName = path.split(os.sep)[-1]
